@@ -4,7 +4,7 @@ static SensorShield sensors{};
 
 SensorShield::SensorShield()
 {
-    gpio_init_mask((1 << ALS_INT_GPIO)); // Default is input.
+    gpio_init_mask((1 << ALS_INT_GPIO) | (1 << TEMP_INT_GPIO)); // Default is input.
 
     // Setup interrupt callback
     gpio_set_irq_enabled_with_callback(
@@ -12,6 +12,7 @@ SensorShield::SensorShield()
         GPIO_IRQ_EDGE_FALL,
         true,
         gpio_callback);
+    gpio_set_irq_enabled(TEMP_INT_GPIO, GPIO_IRQ_EDGE_FALL, true);
 
     // Setup I2C bus, if not done already
     if (I2C_CHANNEL->hw->enable == 0) {
@@ -22,6 +23,7 @@ SensorShield::SensorShield()
 
     // Setup sensors
     setup_als();
+    setup_temp();
 }
 
 SensorShield::~SensorShield() {}
@@ -31,12 +33,22 @@ inline void SensorShield::trigger_als()
     als_int_trig_ = true;
 }
 
+inline void SensorShield::trigger_temp()
+{
+    temp_int_trig_ = true;
+}
+
 void SensorShield::tick()
 {
     if (als_int_trig_)
     {
         als_int_trig_ = false;
         als_callback();
+    }
+    if (temp_int_trig_)
+    {
+        temp_int_trig_ = false;
+        temp_callback();
     }
 }
 
@@ -88,6 +100,24 @@ void SensorShield::setup_als() const
     als_set_thres(ALS_REG_LOW_THRES, ALS_LOWER_THRES);
 }
 
+void SensorShield::setup_temp() const
+{
+    gpio_pull_up(TEMP_INT_GPIO);
+    write_i2c(TEMP_ADDRESS, TEMP_REG_CONF, 0x02); // Set OS Interrupt mode
+
+    // Set overheat warning threshold
+    constexpr int lower_thres = (TEMP_THYS_VAL * 2) << 7;
+    constexpr int higher_thres = (TEMP_TOS_VAL * 2) << 7;
+    constexpr size_t buf_size = 2;
+    uint8_t lower_buffer[buf_size] = {(lower_thres >> 8) & 0xFF, lower_thres & 0xFF};
+    uint8_t higher_buffer[buf_size] = {(higher_thres >> 8) & 0xFF, higher_thres & 0xFF};
+    write_i2c(TEMP_ADDRESS, TEMP_REG_THYS, lower_buffer, buf_size);
+    write_i2c(TEMP_ADDRESS, TEMP_REG_TOS, higher_buffer, buf_size);
+
+    uint8_t reg = TEMP_REG_TEMP;
+    i2c_write_blocking(I2C_CHANNEL, TEMP_ADDRESS, &reg, 1, false); // Set pointer
+}
+
 void SensorShield::als_callback()
 {
     // Read ALS.
@@ -117,6 +147,20 @@ void SensorShield::als_callback()
     get_sensors()->als_status();
 }
 
+void SensorShield::temp_callback()
+{
+    // Read ALS.
+    get_sensors()->temp_read();
+    printf("\nTemperature: %f\n", temp_value_);
+    std::cout << std::endl;
+
+    if (temp_value_ >= TEMP_TOS_VAL) {
+        // Set overheat warning
+    } else if (temp_value_ <= TEMP_THYS_VAL) {
+        // Remove overheat warning
+    }
+}
+
 void SensorShield::als_read(uint32_t *val) const
 {
     // My love/hate relationship with endianness loves the fact that Pico is little endian right now.
@@ -138,6 +182,24 @@ void SensorShield::als_status() const
     std::cout << std::endl;
 }
 
+void SensorShield::temp_read()
+{
+    uint16_t buffer{};
+    // No need to write a register because of preset pointer register, which has been set at config.
+    i2c_read_blocking(I2C_CHANNEL, TEMP_ADDRESS, (uint8_t*)&buffer, sizeof(buffer), false);
+    
+    int decimal = 0; // Reset Value
+    // The sensor is big endian, we need to do some memory modification
+    // We will first cast to uint8_t* so we can do per-byte arithmetic.
+    // Then we will cast to void* so we can switch some bytes.
+    std::memcpy((void*)&decimal, (void*)((uint8_t*)&buffer + 1), 1);
+    std::memcpy((void*)((uint8_t*)&decimal + 1), (void*)&buffer, 1);
+    decimal = decimal >> 5; // Shift 5 places
+    // Conversion from decimal value to degrees is stated in section 7.4.3 of the datasheet.
+    // The sensor has a precision of 0.125 degrees celsius, so every value is 0.125 degrees.
+    temp_value_ = decimal * 0.125f;
+}
+
 SensorShield *get_sensors()
 {
     return &sensors;
@@ -148,5 +210,9 @@ void gpio_callback(uint gpio, uint32_t events)
     if (gpio == ALS_INT_GPIO && (events & GPIO_IRQ_EDGE_FALL))
     {
         get_sensors()->trigger_als();
+    }
+    else if (gpio == TEMP_INT_GPIO && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        get_sensors()->trigger_temp();
     }
 }

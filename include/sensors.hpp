@@ -2,6 +2,7 @@
 #define SENSORS_HPP
 
 #include "pico/stdlib.h"
+#include <cstring>
 #include "hardware/i2c.h"
 #include <iostream>
 #include "dashboard_i2c.hpp"
@@ -24,6 +25,19 @@
 
 #define ALS_INT_GPIO 6
 
+// TEMP SENSOR
+#define TEMP_ADDRESS 0x49
+
+#define TEMP_REG_TEMP 0x00
+#define TEMP_REG_CONF 0x01
+#define TEMP_REG_THYS 0x02
+#define TEMP_REG_TOS 0x03
+
+#define TEMP_THYS_VAL 30
+#define TEMP_TOS_VAL 40
+
+#define TEMP_INT_GPIO 7
+
 // SENSOR SHIELD CLASS
 
 class SensorShield
@@ -32,6 +46,7 @@ public:
     SensorShield();
     ~SensorShield();
     inline void trigger_als();
+    inline void trigger_temp();
     void tick();
 
 private:
@@ -41,16 +56,22 @@ private:
     void als_set_thres(uint8_t reg, uint32_t val) const;
 
     void setup_als() const;
+    void setup_temp() const;
 
     void als_callback();
+    void temp_callback();
 
     void als_read(uint32_t *val) const;
     void als_status() const;
+    void temp_read();
 
     bool night_ = false;
     
     // Initialize to true for initial reading
     volatile bool als_int_trig_ = true;
+    volatile bool temp_int_trig_ = true;
+
+    float temp_value_{};
 };
 
 SensorShield *get_sensors();
