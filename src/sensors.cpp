@@ -38,17 +38,17 @@ inline void SensorShield::trigger_temp()
     temp_int_trig_ = true;
 }
 
-void SensorShield::tick()
+void SensorShield::tick(LCD& lcd)
 {
     if (als_int_trig_)
     {
         als_int_trig_ = false;
-        als_callback();
+        als_callback(lcd);
     }
     if (temp_int_trig_)
     {
         temp_int_trig_ = false;
-        temp_callback();
+        temp_callback(lcd);
     }
 }
 
@@ -118,7 +118,7 @@ void SensorShield::setup_temp() const
     i2c_write_blocking(I2C_CHANNEL, TEMP_ADDRESS, &reg, 1, false); // Set pointer
 }
 
-void SensorShield::als_callback()
+void SensorShield::als_callback(LCD& lcd)
 {
     // Read ALS.
     uint32_t val{};
@@ -133,6 +133,7 @@ void SensorShield::als_callback()
         als_set_thres(ALS_REG_UP_THRES, ALS_UPPER_THRES);
         als_set_thres(ALS_REG_LOW_THRES, 0);
         night_ = true;
+        lcd.write_line_center(std::string{"Night "} + NIGHT, 1);
     }
     else if (val > ALS_UPPER_THRES)
     {
@@ -140,6 +141,7 @@ void SensorShield::als_callback()
         als_set_thres(ALS_REG_UP_THRES, 0xFFFFF);
         als_set_thres(ALS_REG_LOW_THRES, ALS_LOWER_THRES);
         night_ = false;
+        lcd.write_line_center(std::string{"Day "} + DAY, 1);
     }
     std::cout << "Night: " << night_ << std::endl;
 
@@ -147,7 +149,7 @@ void SensorShield::als_callback()
     get_sensors()->als_status();
 }
 
-void SensorShield::temp_callback()
+void SensorShield::temp_callback(LCD& lcd)
 {
     // Read ALS.
     get_sensors()->temp_read();
@@ -156,8 +158,10 @@ void SensorShield::temp_callback()
 
     if (temp_value_ >= TEMP_TOS_VAL) {
         // Set overheat warning
+        lcd.write_line_center(std::string{"Overheat Warning! "} + OVERHEATING, 2);
     } else if (temp_value_ <= TEMP_THYS_VAL) {
         // Remove overheat warning
+        lcd.write_line("", 2, 0); // Clear line
     }
 }
 

@@ -6,6 +6,7 @@
 #include "hardware/i2c.h"
 #include <iostream>
 #include "dashboard_i2c.hpp"
+#include "lcd.hpp"
 
 // ALS
 #define ALS_ADDRESS 0x52
@@ -47,7 +48,7 @@ public:
     ~SensorShield();
     inline void trigger_als();
     inline void trigger_temp();
-    void tick();
+    void tick(LCD& lcd);
 
 private:
     void write_i2c(uint8_t addr, uint8_t reg, uint8_t *val, size_t len) const;
@@ -58,8 +59,8 @@ private:
     void setup_als() const;
     void setup_temp() const;
 
-    void als_callback();
-    void temp_callback();
+    void als_callback(LCD& lcd);
+    void temp_callback(LCD& lcd);
 
     void als_read(uint32_t *val) const;
     void als_status() const;
