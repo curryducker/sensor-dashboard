@@ -4,7 +4,9 @@ static SensorShield sensors{};
 
 SensorShield::SensorShield()
 {
-    gpio_init_mask((1 << ALS_INT_GPIO) | (1 << TEMP_INT_GPIO)); // Default is input.
+    gpio_init_mask((1 << ALS_INT_GPIO) | (1 << TEMP_INT_GPIO) | (1 << CS) | (1 << BUTTON_GPIO) | (1 << BIG_LED_PIN)); // Default is input.
+    gpio_set_dir(CS, GPIO_OUT);
+    gpio_set_dir(BIG_LED_PIN, GPIO_OUT);
 
     // Setup interrupt callback
     gpio_set_irq_enabled_with_callback(
@@ -13,6 +15,7 @@ SensorShield::SensorShield()
         true,
         gpio_callback);
     gpio_set_irq_enabled(TEMP_INT_GPIO, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(BUTTON_GPIO, GPIO_IRQ_EDGE_FALL, true);
 
     // Setup I2C bus, if not done already
     if (I2C_CHANNEL->hw->enable == 0) {
@@ -20,10 +23,17 @@ SensorShield::SensorShield()
         gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
         i2c_init(I2C_CHANNEL, BAUD);
     }
+    
+    // Setup SPI
+    spi_init(spi0, 500 * 1000);
+    gpio_set_function(CLK, GPIO_FUNC_SPI);
+    gpio_set_function(MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(MISO, GPIO_FUNC_SPI);
 
     // Setup sensors
     setup_als();
     setup_temp();
+    setup_leds();
 }
 
 SensorShield::~SensorShield() {}
@@ -38,17 +48,30 @@ inline void SensorShield::trigger_temp()
     temp_int_trig_ = true;
 }
 
+inline void SensorShield::button_pressed()
+{
+    button_int_trig_ = true;
+}
+
 void SensorShield::tick(LCD& lcd)
 {
     if (als_int_trig_)
     {
         als_int_trig_ = false;
         als_callback(lcd);
+        update_leds();
     }
     if (temp_int_trig_)
     {
         temp_int_trig_ = false;
         temp_callback(lcd);
+        update_leds();
+    }
+    if (button_int_trig_)
+    {
+        button_int_trig_ = false;
+        led_src_als_ = !led_src_als_; // Toggle
+        update_leds();
     }
 }
 
@@ -69,6 +92,37 @@ void SensorShield::write_i2c(uint8_t addr, uint8_t reg, uint8_t *val, size_t len
 void SensorShield::write_i2c(uint8_t addr, uint8_t reg, uint8_t val) const
 {
     write_i2c(addr, reg, &val, 1);
+}
+
+void SensorShield::write_to_io(uint8_t reg, uint8_t val) const
+{
+    std::cout << "Writing: " << (int)val << " to LEDs" << std::endl;
+    uint8_t buffer[LED_MSG_SIZE];
+   
+    buffer[0] = COMMAND_BYTE_LED;
+    buffer[1] = reg;
+    buffer[2] = val;
+
+    // Set CS LOW
+    set_cs(CS, 0);
+    // Send buffer
+    spi_write_blocking(spi0, buffer, sizeof(buffer));
+    // Set CS HIGH
+    set_cs(CS, 1);
+    sleep_ms(10);
+}
+
+void SensorShield::write_leds(uint8_t val) const
+{
+    write_to_io(REGISTER_LED, val);
+}
+
+inline void SensorShield::set_cs(uint8_t cs, bool high) const
+{
+    // Set chip select bit with a bit of delay
+    asm volatile("nop \n nop \n nop");
+    gpio_put(cs, high);
+    asm volatile("nop \n nop \n nop");
 }
 
 void SensorShield::als_set_thres(uint8_t reg, uint32_t val) const
@@ -118,32 +172,39 @@ void SensorShield::setup_temp() const
     i2c_write_blocking(I2C_CHANNEL, TEMP_ADDRESS, &reg, 1, false); // Set pointer
 }
 
+void SensorShield::setup_leds() const
+{
+    // Start with CS = 1.
+    gpio_put(CS, 1);
+    // Set directions to output.
+    write_to_io(0, 0);
+}
+
 void SensorShield::als_callback(LCD& lcd)
 {
     // Read ALS.
-    uint32_t val{};
-    get_sensors()->als_read(&val);
-    printf("\n%d\n", val);
-    printf("0x%05X", val);
+    get_sensors()->als_read();
+    printf("\n%d\n", als_value_);
+    printf("0x%05X", als_value_);
     std::cout << std::endl;
 
-    if (val < ALS_LOWER_THRES)
+    bool night = false;
+    if (als_value_ < ALS_LOWER_THRES)
     {
         // Set to only upper threshold.
         als_set_thres(ALS_REG_UP_THRES, ALS_UPPER_THRES);
         als_set_thres(ALS_REG_LOW_THRES, 0);
-        night_ = true;
+        night = true;
         lcd.write_line_center(std::string{"Night "} + NIGHT, 1);
     }
-    else if (val > ALS_UPPER_THRES)
+    else if (als_value_ > ALS_UPPER_THRES)
     {
         // Set to only lower threshold.
         als_set_thres(ALS_REG_UP_THRES, 0xFFFFF);
         als_set_thres(ALS_REG_LOW_THRES, ALS_LOWER_THRES);
-        night_ = false;
         lcd.write_line_center(std::string{"Day "} + DAY, 1);
     }
-    std::cout << "Night: " << night_ << std::endl;
+    std::cout << "Night: " << night << std::endl;
 
     // Read status to reset interrupt.
     get_sensors()->als_status();
@@ -165,15 +226,32 @@ void SensorShield::temp_callback(LCD& lcd)
     }
 }
 
-void SensorShield::als_read(uint32_t *val) const
+void SensorShield::update_leds()
+{
+    if (led_src_als_) {
+        // Display ALS value.
+        constexpr uint32_t max_als = 0xFFFFF;
+        write_leds((als_value_ / (float)max_als) * 0xFF); // compress 20 bits into 8.
+    } else {
+        // Display Temp value
+        // Float will be cut off and will only show values in the range of 0-255 degrees.
+        int temperature = temp_value_;
+        if (temperature < 0x00) temperature = 0x00;
+        if (temperature > 0xFF) temperature = 0xFF;
+        write_leds(temperature);
+    }
+    gpio_put(BIG_LED_PIN, led_src_als_);
+}
+
+void SensorShield::als_read()
 {
     // My love/hate relationship with endianness loves the fact that Pico is little endian right now.
     // This means i can just give the address to a 32-bit integer without worrying about the 12 unused bits.
-    *val = 0; // Reset value, removes garbage from the unused byte in an event where the variable wasn't initialized.
+    als_value_ = 0; // Reset value, removes garbage from the unused byte in an event where the variable wasn't initialized.
     constexpr uint8_t reg[] = {ALS_REG_DATA};
     i2c_write_blocking(I2C_CHANNEL, ALS_ADDRESS, reg, 1, true);
     // 20 bits, so 3 bytes
-    i2c_read_blocking(I2C_CHANNEL, ALS_ADDRESS, (uint8_t *)val, 3, false);
+    i2c_read_blocking(I2C_CHANNEL, ALS_ADDRESS, (uint8_t *)&als_value_, 3, false);
 }
 
 void SensorShield::als_status() const
@@ -218,5 +296,9 @@ void gpio_callback(uint gpio, uint32_t events)
     else if (gpio == TEMP_INT_GPIO && (events & GPIO_IRQ_EDGE_FALL))
     {
         get_sensors()->trigger_temp();
+    }
+    else if (gpio == BUTTON_GPIO && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        get_sensors()->button_pressed();
     }
 }
