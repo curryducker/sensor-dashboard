@@ -8,6 +8,7 @@
 #include <iostream>
 #include "dashboard_i2c.hpp"
 #include "lcd.hpp"
+#include <sstream>
 
 // ALS
 #define ALS_ADDRESS 0x52
@@ -65,7 +66,7 @@ public:
     inline void trigger_als();
     inline void trigger_temp();
     inline void button_pressed();
-    void tick(LCD& lcd);
+    void tick(LCD& lcd1, LCD& lcd2);
 
 private:
     void write_i2c(uint8_t addr, uint8_t reg, uint8_t *val, size_t len) const;
@@ -93,7 +94,7 @@ private:
     volatile bool als_int_trig_ = true;
     volatile bool temp_int_trig_ = true;
 
-    volatile bool button_int_trig_ = false;
+    volatile bool button_int_trig_ = true;
 
     uint32_t als_value_{};
     float temp_value_{};

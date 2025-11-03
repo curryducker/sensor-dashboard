@@ -18,6 +18,7 @@
 #define DAY '\2'
 #define NIGHT '\3'
 #define OVERHEATING '\4'
+#define LED '\5'
 
 class LCD {
     public:

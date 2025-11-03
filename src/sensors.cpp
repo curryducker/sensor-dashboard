@@ -53,18 +53,18 @@ inline void SensorShield::button_pressed()
     button_int_trig_ = true;
 }
 
-void SensorShield::tick(LCD& lcd)
+void SensorShield::tick(LCD& lcd1, LCD& lcd2)
 {
     if (als_int_trig_)
     {
         als_int_trig_ = false;
-        als_callback(lcd);
+        als_callback(lcd2);
         update_leds();
     }
     if (temp_int_trig_)
     {
         temp_int_trig_ = false;
-        temp_callback(lcd);
+        temp_callback(lcd2);
         update_leds();
     }
     if (button_int_trig_)
@@ -72,6 +72,9 @@ void SensorShield::tick(LCD& lcd)
         button_int_trig_ = false;
         led_src_als_ = !led_src_als_; // Toggle
         update_leds();
+        std::ostringstream oss{};
+        oss << LED << (led_src_als_ ? " Light Sensor" : " Temperature");
+        lcd1.write_line_center(oss.str(), 2);
     }
 }
 

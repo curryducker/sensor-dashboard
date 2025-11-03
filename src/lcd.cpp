@@ -143,4 +143,5 @@ void LCD::register_characters()
     register_character(DAY, 0x00150E1B0E150000);
     register_character(NIGHT, 0x00040C080C060000);
     register_character(OVERHEATING, 0x02140D0E1A13190E);
+    register_character(LED, 0x0E1111111F0A0A02);
 }

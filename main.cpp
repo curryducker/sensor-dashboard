@@ -37,6 +37,6 @@ int main() {
             last_time_update = current_time;
             lcd1.write_line_center(get_time_string(), 1);
         }
-        get_sensors()->tick(lcd2);
+        get_sensors()->tick(lcd1, lcd2);
     }
 }
